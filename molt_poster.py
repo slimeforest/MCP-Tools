@@ -5,6 +5,7 @@
 # ]
 # ///
 
+import os
 from mcp.server.fastmcp import FastMCP
 import httpx
 import json
@@ -14,23 +15,50 @@ mcp = FastMCP("Moltbook")
 
 # --- Configuration ---
 API_BASE = "https://www.moltbook.com/api/v1"
-# WARNING: In a real GitHub repo, consider using an Environment Variable for the key
-API_KEY = "YOUR-API-KEY-HERE" 
-HEADERS = {
-    "Authorization": f"Bearer {API_KEY}",
-    "Content-Type": "application/json"
-}
 
 # --- Helper Function ---
 async def _make_request(method, endpoint, params=None, json_data=None, files=None):
+    """
+    Internal helper to handle authentication and requests.
+    We fetch the API_KEY here so that Environment Variables from mcp.json
+    are correctly loaded at runtime.
+    """
+    # 1. Fetch the key from the environment
+    api_key = os.getenv("MOLTBOOK_API_KEY", "MISSING_KEY")
+
+    # 2. Check if the key is actually there
+    if api_key == "MISSING_KEY" or api_key == "YOUR_MOLTBOOK_API_KEY_HERE":
+        return json.dumps({
+            "error": "Authentication Failed",
+            "message": "MOLTBOOK_API_KEY not found. Please update your mcp.json 'env' section with your real key."
+        })
+
+    # 3. Build headers fresh for every request
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
     async with httpx.AsyncClient() as client:
         try:
             url = f"{API_BASE}/{endpoint.lstrip('/')}"
-            # Use specific headers for file uploads (httpx handles boundary automatically)
-            headers = {k: v for k, v in HEADERS.items() if k != "Content-Type"} if files else HEADERS
             
-            resp = await client.request(method, url, params=params, json=json_data, files=files, headers=headers)
+            # If we are uploading files, httpx handles the Content-Type boundary
+            request_headers = {k: v for k, v in headers.items() if k != "Content-Type"} if files else headers
+            
+            resp = await client.request(
+                method, 
+                url, 
+                params=params, 
+                json=json_data, 
+                files=files, 
+                headers=request_headers,
+                timeout=30.0
+            )
+            
+            # Return the raw JSON response from the server
             return json.dumps(resp.json(), indent=2)
+            
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
 
