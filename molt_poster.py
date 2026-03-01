@@ -10,173 +10,393 @@ from mcp.server.fastmcp import FastMCP
 import httpx
 import json
 
-# Initialize FastMCP
 mcp = FastMCP("Moltbook")
 
-# --- Configuration ---
 API_BASE = "https://www.moltbook.com/api/v1"
+API_KEY = os.getenv("MOLTBOOK_API_KEY", "MISSING_KEY")
 
-# --- Helper Function ---
+HEADERS = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
+}
+
+
+# ---------------- REQUEST HELPER ----------------
+
 async def _make_request(method, endpoint, params=None, json_data=None, files=None):
-    """
-    Internal helper to handle authentication and requests.
-    We fetch the API_KEY here so that Environment Variables from mcp.json
-    are correctly loaded at runtime.
-    """
-    # 1. Fetch the key from the environment
-    api_key = os.getenv("MOLTBOOK_API_KEY", "MISSING_KEY")
 
-    # 2. Check if the key is actually there
-    if api_key == "MISSING_KEY" or api_key == "YOUR_MOLTBOOK_API_KEY_HERE":
-        return json.dumps({
-            "error": "Authentication Failed",
-            "message": "MOLTBOOK_API_KEY not found. Please update your mcp.json 'env' section with your real key."
-        })
+    if API_KEY == "MISSING_KEY":
+        return "ERROR: MOLTBOOK_API_KEY missing"
 
-    # 3. Build headers fresh for every request
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
 
-    async with httpx.AsyncClient() as client:
         try:
+
             url = f"{API_BASE}/{endpoint.lstrip('/')}"
-            
-            # If we are uploading files, httpx handles the Content-Type boundary
-            request_headers = {k: v for k, v in headers.items() if k != "Content-Type"} if files else headers
-            
+
+            headers = HEADERS
+            if files:
+                headers = {"Authorization": f"Bearer {API_KEY}"}
+
             resp = await client.request(
-                method, 
-                url, 
-                params=params, 
-                json=json_data, 
-                files=files, 
-                headers=request_headers,
-                timeout=30.0
+                method,
+                url,
+                params=params,
+                json=json_data,
+                files=files,
+                headers=headers,
             )
-            
-            # Return the raw JSON response from the server
-            return json.dumps(resp.json(), indent=2)
-            
+
+            try:
+                return json.dumps(resp.json(), indent=2)
+            except:
+                return resp.text
+
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
 
-# --- 1. CORE & AUTH ---
+
+# ---------------- DASHBOARD ----------------
 
 @mcp.tool()
-async def molt_home() -> str:
-    """Gets your dashboard, notifications, and what to do next. Start here every check-in."""
+async def molt_home():
     return await _make_request("GET", "/home")
 
+
 @mcp.tool()
-async def molt_get_profile(name: str = None) -> str:
-    """Get your own profile or another molty's profile by name."""
+async def molt_notifications():
+    return await _make_request("GET", "/notifications")
+
+
+@mcp.tool()
+async def molt_notifications_read(post_id: str = None):
+
+    if post_id:
+        return await _make_request("POST", f"/notifications/read-by-post/{post_id}")
+
+    return await _make_request("POST", "/notifications/read-all")
+
+
+# ---------------- PROFILE ----------------
+
+@mcp.tool()
+async def molt_get_profile(name: str = None):
+
     endpoint = "/agents/me" if not name else f"/agents/profile?name={name}"
+
     return await _make_request("GET", endpoint)
 
+
 @mcp.tool()
-async def molt_update_profile(description: str = None, metadata: dict = None) -> str:
-    """Update your profile description or metadata (use PATCH)."""
+async def molt_update_profile(description: str = None, metadata: dict = None):
+
     payload = {}
-    if description: payload["description"] = description
-    if metadata: payload["metadata"] = metadata
+
+    if description:
+        payload["description"] = description
+
+    if metadata:
+        payload["metadata"] = metadata
+
     return await _make_request("PATCH", "/agents/me", json_data=payload)
 
-# --- 2. POSTS & COMMENTS ---
 
 @mcp.tool()
-async def molt_post(title: str, content: str = "", submolt: str = "general", url: str = None, post_type: str = "text") -> str:
-    """
-    Creates a post. 
-    NOTE: If 'verification_required' is true, solve the math in 'challenge_text' and call molt_verify.
-    """
+async def molt_upload_avatar(file_path: str):
+
+    files = {"file": open(file_path, "rb")}
+
+    return await _make_request("POST", "/agents/me/avatar", files=files)
+
+
+@mcp.tool()
+async def molt_delete_avatar():
+
+    return await _make_request("DELETE", "/agents/me/avatar")
+
+
+@mcp.tool()
+async def molt_setup_owner_email(email: str):
+
+    return await _make_request(
+        "POST",
+        "/agents/me/setup-owner-email",
+        json_data={"email": email},
+    )
+
+
+# ---------------- POSTS ----------------
+
+@mcp.tool()
+async def molt_post(title: str, content: str = "", submolt: str = "general", url: str = None, post_type="text"):
+
     payload = {
-        "submolt_name": submolt,
         "title": title,
         "content": content,
-        "type": post_type
+        "submolt_name": submolt,
+        "type": post_type,
     }
-    if url: payload["url"] = url
+
+    if url:
+        payload["url"] = url
+
     return await _make_request("POST", "/posts", json_data=payload)
 
-@mcp.tool()
-async def molt_verify(verification_code: str, answer: str) -> str:
-    """Submit answer to a math challenge (e.g. '15.00') to publish content."""
-    return await _make_request("POST", "/verify", json_data={"verification_code": verification_code, "answer": answer})
 
 @mcp.tool()
-async def molt_get_feed(sort: str = "hot", limit: int = 25, filter_type: str = "all", cursor: str = None) -> str:
-    """Get personalized feed. filter_type: 'all' or 'following'."""
-    params = {"sort": sort, "limit": limit, "filter": filter_type}
-    if cursor: params["cursor"] = cursor
+async def molt_get_post(post_id: str):
+
+    return await _make_request("GET", f"/posts/{post_id}")
+
+
+@mcp.tool()
+async def molt_edit_post(post_id: str, title: str = None, content: str = None):
+
+    payload = {}
+
+    if title:
+        payload["title"] = title
+
+    if content:
+        payload["content"] = content
+
+    return await _make_request("PATCH", f"/posts/{post_id}", json_data=payload)
+
+
+@mcp.tool()
+async def molt_delete_post(post_id: str):
+
+    return await _make_request("DELETE", f"/posts/{post_id}")
+
+
+@mcp.tool()
+async def molt_get_feed(sort="hot", limit=25, filter_type="all", cursor=None):
+
+    params = {
+        "sort": sort,
+        "limit": limit,
+        "filter": filter_type,
+    }
+
+    if cursor:
+        params["cursor"] = cursor
+
     return await _make_request("GET", "/feed", params=params)
 
+
+# ---------------- COMMENTS ----------------
+
 @mcp.tool()
-async def molt_comment(post_id: str, content: str, parent_id: str = None) -> str:
-    """Add a comment or reply to a specific comment (using parent_id)."""
+async def molt_comment(post_id: str, content: str, parent_id: str = None):
+
     payload = {"content": content}
-    if parent_id: payload["parent_id"] = parent_id
-    return await _make_request("POST", f"/posts/{post_id}/comments", json_data=payload)
 
-# --- 3. SOCIAL ACTIONS ---
+    if parent_id:
+        payload["parent_id"] = parent_id
+
+    return await _make_request(
+        "POST",
+        f"/posts/{post_id}/comments",
+        json_data=payload,
+    )
+
 
 @mcp.tool()
-async def molt_vote(target_type: str, target_id: str, direction: str = "upvote") -> str:
-    """Vote on content. target_type: 'posts' or 'comments'. direction: 'upvote' or 'downvote'."""
-    return await _make_request("POST", f"/{target_type}/{target_id}/{direction}")
+async def molt_get_comments(post_id: str, sort="best"):
+
+    return await _make_request(
+        "GET",
+        f"/posts/{post_id}/comments",
+        params={"sort": sort},
+    )
+
 
 @mcp.tool()
-async def molt_follow_toggle(molty_name: str, follow: bool = True) -> str:
-    """Follow or unfollow another molty."""
+async def molt_edit_comment(comment_id: str, content: str):
+
+    return await _make_request(
+        "PATCH",
+        f"/comments/{comment_id}",
+        json_data={"content": content},
+    )
+
+
+@mcp.tool()
+async def molt_delete_comment(comment_id: str):
+
+    return await _make_request("DELETE", f"/comments/{comment_id}")
+
+
+# ---------------- VOTING ----------------
+
+@mcp.tool()
+async def molt_vote(target_type: str, target_id: str, direction="upvote"):
+
+    return await _make_request(
+        "POST",
+        f"/{target_type}/{target_id}/{direction}",
+    )
+
+
+# ---------------- FOLLOW ----------------
+
+@mcp.tool()
+async def molt_follow_toggle(name: str, follow=True):
+
     method = "POST" if follow else "DELETE"
-    return await _make_request(method, f"/agents/{molty_name}/follow")
+
+    return await _make_request(method, f"/agents/{name}/follow")
+
+
+# ---------------- SEARCH ----------------
 
 @mcp.tool()
-async def molt_notifications_read(post_id: str = None) -> str:
-    """Mark notifications as read. If post_id is provided, marks only that post's notifications."""
-    endpoint = f"/notifications/read-by-post/{post_id}" if post_id else "/notifications/read-all"
-    return await _make_request("POST", endpoint)
+async def molt_search(query: str, search_type="all", limit=20):
 
-# --- 4. DISCOVERY & SEARCH ---
+    return await _make_request(
+        "GET",
+        "/search",
+        params={
+            "q": query,
+            "type": search_type,
+            "limit": limit,
+        },
+    )
+
+
+# ---------------- SUBMOLTS ----------------
 
 @mcp.tool()
-async def molt_search(query: str, search_type: str = "all", limit: int = 20) -> str:
-    """Semantic search (AI-powered). Understands meaning, not just keywords."""
-    params = {"q": query, "type": search_type, "limit": limit}
-    return await _make_request("GET", "/search", params=params)
+async def molt_list_submolts():
 
-@mcp.tool()
-async def molt_list_submolts() -> str:
-    """List all available communities (submolts)."""
     return await _make_request("GET", "/submolts")
 
-# --- 5. SUBMOLT MANAGEMENT (MODERATION) ---
 
 @mcp.tool()
-async def molt_create_submolt(name: str, display_name: str, description: str = "", allow_crypto: bool = False) -> str:
-    """Create a new community. Use allow_crypto=True only for crypto-specific submolts."""
-    payload = {
-        "name": name, 
-        "display_name": display_name, 
-        "description": description, 
-        "allow_crypto": allow_crypto
-    }
-    return await _make_request("POST", "/submolts", json_data=payload)
+async def molt_get_submolt(name: str):
+
+    return await _make_request("GET", f"/submolts/{name}")
+
 
 @mcp.tool()
-async def molt_mod_action(submolt: str, action: str, target_post_id: str = None, agent_name: str = None) -> str:
-    """
-    Moderation actions. 
-    Actions: 'pin' (target_post_id), 'unpin' (target_post_id), 'add_mod' (agent_name), 'remove_mod' (agent_name).
-    """
-    if action == "pin": return await _make_request("POST", f"/posts/{target_post_id}/pin")
-    if action == "unpin": return await _make_request("DELETE", f"/posts/{target_post_id}/pin")
-    if action == "add_mod": 
-        return await _make_request("POST", f"/submolts/{submolt}/moderators", json_data={"agent_name": agent_name, "role": "moderator"})
-    if action == "remove_mod":
-        return await _make_request("DELETE", f"/submolts/{submolt}/moderators", json_data={"agent_name": agent_name})
-    return "Invalid action."
+async def molt_create_submolt(name: str, display_name: str, description="", allow_crypto=False):
+
+    return await _make_request(
+        "POST",
+        "/submolts",
+        json_data={
+            "name": name,
+            "display_name": display_name,
+            "description": description,
+            "allow_crypto": allow_crypto,
+        },
+    )
+
+
+@mcp.tool()
+async def molt_update_submolt_settings(name: str, description=None, banner_color=None, theme_color=None):
+
+    payload = {}
+
+    if description:
+        payload["description"] = description
+
+    if banner_color:
+        payload["banner_color"] = banner_color
+
+    if theme_color:
+        payload["theme_color"] = theme_color
+
+    return await _make_request(
+        "PATCH",
+        f"/submolts/{name}/settings",
+        json_data=payload,
+    )
+
+
+@mcp.tool()
+async def molt_upload_submolt_avatar(name: str, file_path: str):
+
+    files = {"file": open(file_path, "rb")}
+
+    return await _make_request(
+        "POST",
+        f"/submolts/{name}/avatar",
+        files=files,
+    )
+
+
+@mcp.tool()
+async def molt_upload_submolt_banner(name: str, file_path: str):
+
+    files = {"file": open(file_path, "rb")}
+
+    return await _make_request(
+        "POST",
+        f"/submolts/{name}/banner",
+        files=files,
+    )
+
+
+@mcp.tool()
+async def molt_list_moderators(name: str):
+
+    return await _make_request(
+        "GET",
+        f"/submolts/{name}/moderators",
+    )
+
+
+# ---------------- MODERATION ----------------
+
+@mcp.tool()
+async def molt_pin_post(post_id: str):
+
+    return await _make_request("POST", f"/posts/{post_id}/pin")
+
+
+@mcp.tool()
+async def molt_unpin_post(post_id: str):
+
+    return await _make_request("DELETE", f"/posts/{post_id}/pin")
+
+
+@mcp.tool()
+async def molt_add_mod(submolt: str, agent_name: str):
+
+    return await _make_request(
+        "POST",
+        f"/submolts/{submolt}/moderators",
+        json_data={"agent_name": agent_name, "role": "moderator"},
+    )
+
+
+@mcp.tool()
+async def molt_remove_mod(submolt: str, agent_name: str):
+
+    return await _make_request(
+        "DELETE",
+        f"/submolts/{submolt}/moderators",
+        json_data={"agent_name": agent_name},
+    )
+
+
+# ---------------- VERIFY ----------------
+
+@mcp.tool()
+async def molt_verify(code: str, answer: str):
+
+    return await _make_request(
+        "POST",
+        "/verify",
+        json_data={
+            "verification_code": code,
+            "answer": answer,
+        },
+    )
+
+
+# ---------------- RUN ----------------
 
 if __name__ == "__main__":
     mcp.run()
