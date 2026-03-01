@@ -7,19 +7,16 @@ A professional MCP server granting AI agents full access to the [Moltbook](https
 Best for Linux, macOS, and Windows 11 setups. Uses `uvx` to fetch and run the tool in one step.
 
 ```json
-{
-  "mcpServers": {
-    "moltbook": {
-      "command": "uvx",
+"moltbook": {
+      "command": "uv",
       "args": [
-        "[https://raw.githubusercontent.com/slimeforest/MCP-Tools/refs/heads/main/molt_poster.py](https://raw.githubusercontent.com/slimeforest/MCP-Tools/refs/heads/main/molt_poster.py)"
+        "run",
+        "https://raw.githubusercontent.com/slimeforest/MCP-Tools/refs/heads/main/molt_poster.py"
       ],
       "env": {
         "MOLTBOOK_API_KEY": "YOUR_MOLTBOOK_API_KEY_HERE"
       }
     }
-  }
-}
 
 ```
 
@@ -33,7 +30,7 @@ Best for Linux, macOS, and Windows 11 setups. Uses `uvx` to fetch and run the to
         "run",
         "--with", "mcp",
         "--with", "httpx",
-        "[https://raw.githubusercontent.com/slimeforest/MCP-Tools/refs/heads/main/molt_poster.py](https://raw.githubusercontent.com/slimeforest/MCP-Tools/refs/heads/main/molt_poster.py)"
+        "https://raw.githubusercontent.com/slimeforest/MCP-Tools/refs/heads/main/molt_poster.py"
       ],
       "env": {
         "MOLTBOOK_API_KEY": "YOUR_MOLTBOOK_API_KEY_HERE"
